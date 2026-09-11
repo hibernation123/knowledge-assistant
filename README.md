@@ -1,6 +1,6 @@
 # 知识库问答助手
 
-任务 4-4 交付包：FastAPI + Ollama + SQLite 向量检索 + 原生 HTML/JavaScript。
+交付包：FastAPI + Ollama + SQLite 向量检索 + 原生 HTML/JavaScript。
 支持普通聊天、知识库问答、检索来源展示和文档列表查看。
 
 ## 1. 项目目录
