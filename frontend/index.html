@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>知识库问答助手</title>
+
+  <style>
+    body {
+      max-width: 700px;
+      margin: 40px auto;
+      padding: 0 16px;
+      font-family: sans-serif;
+      background: #f5f7fa;
+      color: #222;
+    }
+
+    h1 {
+      text-align: center;
+    }
+
+    select, input, button {
+      font-size: 16px;
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+    }
+
+    button {
+      background: #2563eb;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      background: #94a3b8;
+      cursor: wait;
+    }
+
+    .kb-panel {
+      margin-top: 20px;
+      padding: 16px;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+    }
+
+    #docsInfo {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    #messages {
+      height: 350px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      background: white;
+      padding: 16px;
+      margin: 20px 0;
+    }
+
+    #messages p {
+      padding: 10px;
+      border-radius: 6px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .user {
+      background: #dbeafe;
+    }
+
+    .ai {
+      background: #f1f5f9;
+    }
+
+    .source {
+      color: #555;
+      font-size: 14px;
+    }
+
+    .error {
+      color: #b91c1c;
+      background: #fee2e2;
+    }
+
+    form {
+      display: flex;
+      gap: 10px;
+    }
+
+    #question {
+      flex: 1;
+      min-width: 0;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>知识库问答助手</h1>
+
+  <!-- 模式选择 -->
+  <label for="mode">聊天模式：</label>
+  <select id="mode">
+    <option value="chat">普通聊天</option>
+    <option value="rag_chat">知识库聊天</option>
+  </select>
+
+  <!-- 知识库文档列表 -->
+  <div class="kb-panel">
+    <button id="docsButton" type="button">
+      查看知识库文档
+    </button>
+
+    <p id="docsInfo" aria-live="polite">
+      点击按钮查看文档目录中的文件
+    </p>
+  </div>
+
+  <!-- 聊天记录 -->
+  <div id="messages" role="log" aria-live="polite"></div>
+
+  <!-- 输入和发送 -->
+  <form id="chatForm">
+    <input
+      id="question"
+      type="text"
+      aria-label="问题"
+      placeholder="请输入问题"
+      autocomplete="off"
+      required
+    >
+    <button id="sendButton" type="submit">发送</button>
+  </form>
+
+  <script>
+    const modeSelect = document.getElementById("mode");
+    const questionInput = document.getElementById("question");
+    const messages = document.getElementById("messages");
+    const sendButton = document.getElementById("sendButton");
+    const chatForm = document.getElementById("chatForm");
+    const docsButton = document.getElementById("docsButton");
+    const docsInfo = document.getElementById("docsInfo");
+
+    // 保存后端返回的会话编号，刷新页面后重置
+    let sessionId = null;
+
+    // 向聊天区域添加消息
+    function addMessage(text, className) {
+      const p = document.createElement("p");
+
+      // 按文本显示，避免把回答内容当成 HTML 执行
+      p.textContent = text;
+      p.className = className;
+
+      messages.appendChild(p);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    // 读取知识库文档列表
+    async function loadDocs() {
+      docsButton.disabled = true;
+      docsInfo.textContent = "正在读取文档列表…";
+
+      try {
+        const response = await fetch("/kb_docs");
+
+        if (!response.ok) {
+          throw new Error("接口返回 HTTP " + response.status);
+        }
+
+        const data = await response.json();
+
+        if (data.count === 0) {
+          docsInfo.textContent =
+            "暂无文档，请先把资料放入 kb_docs 文件夹。";
+        } else {
+          docsInfo.textContent =
+            "文档目录中共有 " + data.count + " 个文件：\n" +
+            data.documents.join("\n");
+        }
+      } catch (error) {
+        docsInfo.textContent = "读取失败：" + error.message;
+      } finally {
+        docsButton.disabled = false;
+      }
+    }
+
+    docsButton.addEventListener("click", loadDocs);
+
+    // 发送聊天请求
+    chatForm.addEventListener("submit", async function (event) {
+      // 阻止表单提交时刷新网页
+      event.preventDefault();
+
+      const question = questionInput.value.trim();
+      const mode = modeSelect.value;
+      const modeName = modeSelect.options[modeSelect.selectedIndex].text;
+
+      // 不发送空白问题，也不重复提交
+      if (!question || sendButton.disabled) {
+        return;
+      }
+
+      addMessage("我（" + modeName + "）：" + question, "user");
+
+      sendButton.disabled = true;
+      modeSelect.disabled = true;
+      questionInput.disabled = true;
+      sendButton.textContent = "回答中…";
+
+      try {
+        // mode 为 chat 或 rag_chat，对应两个后端接口
+        const response = await fetch("/" + mode, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            question: question,
+            session_id: sessionId
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error("接口返回 HTTP " + response.status);
+        }
+
+        const data = await response.json();
+
+        // 后续提问使用同一个会话编号
+        sessionId = data.session_id;
+
+        addMessage("AI：" + data.answer, "ai");
+
+        // 展示后端返回的参考来源
+        if (data.sources && data.sources.length > 0) {
+          const sourceText = data.sources.map(function (source) {
+            return source.title +
+              "（" + source.id +
+              "，分数：" + source.score + "）";
+          }).join("\n");
+
+          addMessage("参考来源：\n" + sourceText, "source");
+        }
+
+        // 成功后清空输入框
+        questionInput.value = "";
+      } catch (error) {
+        // 失败时保留问题，方便再次发送
+        addMessage("发送失败：" + error.message, "error");
+      } finally {
+        sendButton.disabled = false;
+        modeSelect.disabled = false;
+        questionInput.disabled = false;
+        sendButton.textContent = "发送";
+        questionInput.focus();
+      }
+    });
+  </script>
+</body>
+</html>
